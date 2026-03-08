@@ -1,0 +1,72 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Automated Vercel deployment — triggered on every push to `main`.
+#
+# REQUIRED SETUP (one-time, in GitHub repo Settings → Secrets and variables → Actions)
+#
+# ┌─ Secrets (sensitive) ────────────────────────────────────────────────────┐
+# │  VERCEL_TOKEN       Personal Access Token                                │
+# │                     Create at: https://vercel.com/account/tokens         │
+# └──────────────────────────────────────────────────────────────────────────┘
+#
+# ┌─ Variables (not sensitive, visible in logs) ─────────────────────────────┐
+# │  VERCEL_ORG_ID      Your team/personal account ID                        │
+# │  VERCEL_PROJECT_ID  The specific Vercel project to deploy to             │
+# │                                                                           │
+# │  How to find these values:                                                │
+# │    1. Run `vercel link` locally and link to the target project            │
+# │    2. Open the generated .vercel/project.json file                        │
+# │    3. Copy "orgId"  → VERCEL_ORG_ID                                       │
+# │       Copy "projectId" → VERCEL_PROJECT_ID                               │
+# │                                                                           │
+# │  Alternatively, visit vercel.com → Project Settings → General            │
+# │  and copy the Project ID shown at the bottom of the page.                │
+# └──────────────────────────────────────────────────────────────────────────┘
+#
+# NOTES:
+#   - .next.zip must be committed to the repository (it is not gitignored).
+#   - The script fetches rootDirectory from the Vercel API automatically.
+#     If your project has rootDirectory set (e.g. "client"), files will be
+#     mirrored into that subfolder before deployment.
+# ──────────────────────────────────────────────────────────────────────────────
+
+name: Deploy to Vercel
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: Prepare & Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel@latest
+
+      # Runs prepare-deploy.js:
+      #   1. Extracts .next.zip → nextBuild/
+      #   2. Patches required-server-files.json paths
+      #   3. Writes vercel.json + .vercelignore
+      #   4. Mirrors files into rootDirectory/ (fetched from Vercel API)
+      - name: Prepare build output
+        run: node prepare-deploy.js
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
+
+      - name: Deploy to Vercel
+        run: vercel deploy --prod --yes --token "$VERCEL_TOKEN"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
