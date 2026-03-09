@@ -58,7 +58,8 @@ function parseCentralDirectory(buf) {
     const extraLen         = buf.readUInt16LE(i + 30);
     const commentLen       = buf.readUInt16LE(i + 32);
     const localHeaderOff   = buf.readUInt32LE(i + 42);
-    const fileName         = buf.slice(i + 46, i + 46 + fileNameLen).toString('utf8');
+    const fileName         = buf.slice(i + 46, i + 46 + fileNameLen).toString('utf8')
+                               .replace(/\\/g, '/');  // normalise Windows backslashes
 
     entries.push({ fileName, compression, compressedSize, uncompressedSize, localHeaderOff });
     i += 46 + fileNameLen + extraLen + commentLen;
@@ -84,9 +85,11 @@ function extractEntry(buf, entry) {
 function detectZipRoot(entries) {
   for (const e of entries) {
     const parts = e.fileName.split('/');
+    // Standard: entries like ".next/foo" or ".next/"
     if (parts.length >= 2 && parts[0]) return parts[0];
   }
-  return null;
+  // Flat ZIP (no root folder prefix) — treat all entries as already under root
+  return '';
 }
 
 // ─── Step 3: Extract ZIP → nextBuild/ ────────────────────────────────────────
@@ -102,11 +105,15 @@ const entries = parseCentralDirectory(zipBuf);
 console.log('[+] ZIP contains ' + entries.length + ' entries');
 
 const zipRoot = detectZipRoot(entries);
-if (!zipRoot) {
+if (zipRoot === null) {
   console.error('[ERROR] Could not detect root folder inside ZIP');
   process.exit(1);
 }
-console.log('[+] Detected ZIP root folder: ' + zipRoot + '/');
+if (zipRoot === '') {
+  console.log('[+] ZIP has no root folder prefix (flat layout)');
+} else {
+  console.log('[+] Detected ZIP root folder: ' + zipRoot + '/');
+}
 
 console.log('[*] Cleaning ' + BUILD_DIR + '/ ...');
 fs.rmSync(BUILD_PATH, { recursive: true, force: true });
@@ -115,7 +122,10 @@ console.log('[+] Cleaned');
 let extracted = 0;
 for (const entry of entries) {
   // Rewrite: <zipRoot>/foo/bar  ->  nextBuild/foo/bar
-  const relative = entry.fileName.replace(/^[^/]+\//, BUILD_DIR + '/');
+  // If zipRoot is '' (flat ZIP), just prepend BUILD_DIR
+  const relative = zipRoot
+    ? entry.fileName.replace(/^[^/]+\//, BUILD_DIR + '/')
+    : BUILD_DIR + '/' + entry.fileName;
   const outPath  = path.join(ROOT, relative.replace(/\//g, path.sep));
 
   if (entry.fileName.endsWith('/')) {
