@@ -341,10 +341,10 @@ async function manageVercel(rl) {
       case 'd': {
         const envTarget = await ask(rl, 'Pull from environment [production/preview/development] (default: production): ');
         const t = envTarget.trim() || 'production';
-        const outFile = await ask(rl, 'Output file (default: .env.local): ');
-        const out = outFile.trim() || '.env.local';
+        const outFile = await ask(rl, 'Output file (default: .env.vercel): ');
+        const out = outFile.trim() || '.env.vercel';
         run(`vercel env pull ${out} --environment ${t} --yes`);
-        console.log(`[+] Pulled env vars into ${out}`);
+        console.log(`[+] Pulled Vercel env vars into ${out} (not .env.local — that is for application keys only)`);
         break;
       }
       case 'e': {
@@ -387,9 +387,93 @@ async function manageVercel(rl) {
   }
 }
 
+// ─── Env var checker / prompt ────────────────────────────────────────────────
+
+async function checkAndPromptEnvVars(rl) {
+  header('Environment Variable Check');
+
+  const envPath     = path.join(ROOT, '.env.local');
+  const examplePath = path.join(ROOT, '.env.local.example');
+
+  // Bootstrap .env.local from example if missing
+  if (!fs.existsSync(envPath)) {
+    if (fs.existsSync(examplePath)) {
+      fs.copyFileSync(examplePath, envPath);
+      console.log('[+] Created .env.local from .env.local.example');
+    } else {
+      console.log('[!] No .env.local or .env.local.example found. Skipping env check.');
+      return;
+    }
+  }
+
+  const vars        = parseEnvFile(envPath);
+  const exampleVars = fs.existsSync(examplePath) ? parseEnvFile(examplePath) : {};
+
+  // All keys from both files (example first so order is consistent)
+  const allKeys = [...new Set([...Object.keys(exampleVars), ...Object.keys(vars)])];
+
+  const skipKeys = new Set();
+
+  const isPlaceholder = (val) =>
+    !val || val.toLowerCase().includes('your-') || val === 'change-me' || val === 'CHANGEME';
+
+  let changed = false;
+  for (const key of allKeys) {
+    if (skipKeys.has(key)) continue;
+    const current = vars[key];
+    if (isPlaceholder(current)) {
+      // Placeholder — must be configured, no sensible default to fall back on
+      console.log(`\n[!] ${key} is not configured`);
+      let val = '';
+      while (!val) {
+        val = (await ask(rl, `    Enter value for ${key}: `)).trim();
+        if (!val) console.log(`    [!] Value cannot be empty.`);
+      }
+      vars[key] = val;
+      changed = true;
+    } else {
+      // Already set — offer to replace, keep current if user presses Enter
+      const input = (await ask(rl, `[?] ${key} = "${current}"\n    New value (Enter to keep): `)).trim();
+      if (input) {
+        vars[key] = input;
+        changed = true;
+        console.log(`    [+] Updated.`);
+      } else {
+        console.log(`    [+] Kept.`);
+      }
+    }
+  }
+
+  if (changed) {
+    // Rewrite .env.local, preserving comments from the example template
+    let out = '';
+    if (fs.existsSync(examplePath)) {
+      for (const line of fs.readFileSync(examplePath, 'utf8').split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) { out += line + '\n'; continue; }
+        const eq = trimmed.indexOf('=');
+        if (eq === -1) { out += line + '\n'; continue; }
+        const key = trimmed.slice(0, eq).trim();
+        out += key in vars ? `${key}=${vars[key]}\n` : `${line}\n`;
+      }
+      // Append any extra keys not present in the example
+      for (const [k, v] of Object.entries(vars)) {
+        if (!(k in exampleVars)) out += `${k}=${v}\n`;
+      }
+    } else {
+      out = Object.entries(vars).map(([k, v]) => `${k}=${v}`).join('\n') + '\n';
+    }
+    fs.writeFileSync(envPath, out, 'utf8');
+    console.log('\n[+] .env.local saved.');
+  } else {
+    console.log('\n[+] All environment variables look good.');
+  }
+}
+
 // ─── Deployment modes ────────────────────────────────────────────────────────
 
-function deployLocal() {
+async function deployLocal(rl) {
+  await checkAndPromptEnvVars(rl);
   header('Starting Local Server');
   console.log('[*] Starting Next.js server on http://localhost:3000 ...');
   run('npx next start');
@@ -419,6 +503,7 @@ function checkVercelSetup() {
 }
 
 async function deployVercelFull(rl) {
+  await checkAndPromptEnvVars(rl);
   await checkVercelSetup(rl);
   await uploadEnvVars(rl);
   header('Deploying to Vercel');
@@ -496,7 +581,7 @@ async function interactiveMenu(rl) {
       await ensureDefaultRepo(rl);
       await downloadZip(rl);
       prepareBuild();
-      deployLocal();
+      await deployLocal(rl);
       break;
     case '3':
       prepareBuild();
@@ -504,7 +589,7 @@ async function interactiveMenu(rl) {
       break;
     case '4':
       prepareBuild();
-      deployLocal();
+      await deployLocal(rl);
       break;
     case '5':
       await uploadEnvVars(rl);
@@ -552,7 +637,7 @@ async function main() {
       await ensureDefaultRepo(rl);
       await downloadZip(rl);
       prepareBuild();
-      deployLocal();
+      await deployLocal(rl);
     } else if (cmd === 'vercel') {
       checkGitHubAuth();
       await ensureDefaultRepo(rl);
