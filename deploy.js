@@ -97,6 +97,32 @@ function ensureDefaultRepo(rl) {
   });
 }
 
+// ─── Repo resolution (no auth required for public repos) ────────────────────
+
+function detectRepoFromRemote() {
+  const url = runCapture('git remote get-url origin');
+  if (!url) return null;
+  // Handles both https://github.com/owner/repo.git and git@github.com:owner/repo.git
+  const m = url.match(/github\.com[/:]([^/\s]+\/[^/\s.]+)/);
+  return m ? m[1].replace(/\.git$/, '') : null;
+}
+
+async function resolveRepo(rl) {
+  const fromRemote = detectRepoFromRemote();
+  if (fromRemote) {
+    console.log(`[+] Using repo: ${fromRemote}`);
+    return fromRemote;
+  }
+  // Try gh default without requiring login
+  const ghDefault = runCapture('gh repo set-default --view');
+  if (ghDefault && !ghDefault.includes('no default') && !ghDefault.includes('error')) {
+    console.log(`[+] Using repo: ${ghDefault.trim()}`);
+    return ghDefault.trim();
+  }
+  const repo = await ask(rl, '    Enter repo (e.g. GhostXRJ/EducativeViewer): ');
+  return repo.trim();
+}
+
 // ─── Repo management ─────────────────────────────────────────────────────────
 
 async function manageRepo(rl) {
@@ -190,20 +216,66 @@ async function manageRepo(rl) {
 async function downloadZip(rl) {
   header('Download .next.zip from GitHub Releases');
 
-  // List available releases
-  const releases = runCapture('gh release list --limit 10');
+  const repo = await resolveRepo(rl);
+
+  // List ALL releases — works unauthenticated for public repos
+  let releases = runCapture(`gh release list --repo "${repo}" --limit 100`);
+  let latestTag = null;
   if (!releases) {
-    console.error('[ERROR] No releases found or gh command failed.');
+    // Fallback: GitHub REST API (no auth needed for public repos)
+    console.log('[!] gh CLI unavailable or not authenticated, fetching via GitHub API...');
+    const apiUrl = `https://api.github.com/repos/${repo}/releases?per_page=100`;
+    const raw = process.platform === 'win32'
+      ? runCapture(`powershell -Command "(Invoke-WebRequest -Uri '${apiUrl}' -UseBasicParsing).Content"`)
+      : runCapture(`curl -sf "${apiUrl}"`);
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed.length) latestTag = parsed[0].tag_name;
+        releases = parsed.map(r => `${r.tag_name.padEnd(20)} ${r.name || ''}`).join('\n');
+      } catch { /* ignore parse error */ }
+    }
+  } else {
+    // gh release list output: first token of the first line is the latest tag
+    const firstLine = releases.split('\n').find(l => l.trim());
+    if (firstLine) latestTag = firstLine.trim().split(/\s+/)[0];
+  }
+  if (!releases) {
+    console.error('[ERROR] Could not fetch releases. Check repo name and network connection.');
     process.exit(1);
   }
+
   console.log('\nAvailable releases:\n');
   console.log(releases);
 
-  const tag = await ask(rl, '\nEnter release tag to download from (e.g. v1.0.0): ');
-  console.log(`\n[*] Downloading .next.zip from release ${tag.trim()} ...`);
-  run(`gh release download "${tag.trim()}" --pattern "*.zip" --output "${ZIP_PATH}" --clobber`);
+  const prompt = latestTag
+    ? `\nEnter release tag to download (default: ${latestTag}): `
+    : '\nEnter release tag to download from (e.g. v1.0.0): ';
+  const tagInput = (await ask(rl, prompt)).trim();
+  const tagClean = tagInput || latestTag;
+  if (!tagClean) {
+    console.error('[ERROR] No tag provided and no latest release found.');
+    process.exit(1);
+  }
+  console.log(`\n[*] Downloading .next.zip from release ${tagClean} ...`);
+
+  // Try gh first (works without auth for public repos), fall back to direct URL
+  const ghResult = spawnSync(
+    `gh release download "${tagClean}" --repo "${repo}" --pattern "*.zip" --output "${ZIP_PATH}" --clobber`,
+    { shell: true, stdio: ['ignore', 'pipe', 'pipe'], cwd: ROOT }
+  );
+  if (ghResult.status !== 0) {
+    console.log('[!] gh download failed, falling back to direct URL download...');
+    const url = `https://github.com/${repo}/releases/download/${tagClean}/.next.zip`;
+    if (process.platform === 'win32') {
+      run(`powershell -Command "Invoke-WebRequest -Uri '${url}' -OutFile '${ZIP_PATH}'"`);
+    } else {
+      run(`curl -L "${url}" -o "${ZIP_PATH}"`);
+    }
+  }
+
   console.log(`[+] Saved to ${ZIP_PATH}`);
-  return tag.trim();
+  return tagClean;
 }
 
 // ─── Prepare build output ────────────────────────────────────────────────────
@@ -570,16 +642,12 @@ async function interactiveMenu(rl) {
 
   switch (choice.trim()) {
     case '1':
-      checkGitHubAuth();
-      await ensureDefaultRepo(rl);
-      await downloadZip(rl);
+      await downloadZip(rl);  // resolves repo without requiring auth
       prepareBuild();
       await deployVercelFull(rl);
       break;
     case '2':
-      checkGitHubAuth();
-      await ensureDefaultRepo(rl);
-      await downloadZip(rl);
+      await downloadZip(rl);  // resolves repo without requiring auth
       prepareBuild();
       await deployLocal(rl);
       break;
@@ -633,15 +701,11 @@ async function main() {
     if (!cmd) {
       await interactiveMenu(rl);
     } else if (cmd === 'local') {
-      checkGitHubAuth();
-      await ensureDefaultRepo(rl);
-      await downloadZip(rl);
+      await downloadZip(rl);  // resolves repo without requiring auth
       prepareBuild();
       await deployLocal(rl);
     } else if (cmd === 'vercel') {
-      checkGitHubAuth();
-      await ensureDefaultRepo(rl);
-      await downloadZip(rl);
+      await downloadZip(rl);  // resolves repo without requiring auth
       prepareBuild();
       await deployVercelFull(rl);
     } else if (cmd === 'env') {
