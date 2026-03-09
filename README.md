@@ -73,6 +73,58 @@ Use `deploy.js` option **5** or **9 → c** to push these to Vercel automaticall
 
 ---
 
+## Cloudflare Worker — Unified Proxy
+
+The `cloudflare-worker.js` acts as a single public entry point for the app, sitting in front of both Vercel and your static file server.
+
+### Why it is needed
+
+Vercel deployments serve everything under the `vercel.app` domain.  
+When a page rendered by Vercel needs a static asset (image, JS chunk, etc.) that lives on a different origin (e.g. an R2 bucket or a self-hosted CDN), the browser may encounter cross-origin issues or the asset URL may be hard to keep consistent across environments.
+
+By routing **all traffic through one Cloudflare Worker domain** you get:
+
+- A consistent domain for every resource — pages, API calls, and static assets.
+- Optional Basic Auth applied uniformly at the edge.
+- The ability to move the static server or the Vercel project without touching client-side URLs.
+
+### How it works
+
+```
+Browser → Cloudflare Worker
+              │
+              ├─ pathname starts with /api  →  static file server (staticBase)
+              │
+              └─ everything else            →  Vercel (vercelBase)
+```
+
+Every upstream request gets the `x-edu-proxy` header injected so Vercel can verify the request came through the worker.
+
+### Setup
+
+1. Open `cloudflare-worker.js` and fill in the `config` block at the top:
+
+   | Field | Description |
+   |---|---|
+   | `vercelBase` | Your Vercel deployment URL, e.g. `https://my-app.vercel.app` |
+   | `staticBase` | Base URL of the server that hosts your static files (R2, S3, nginx, …) |
+   | `staticPrefix` | URL path prefix routed to `staticBase` (default `/api`) |
+   | `proxySecret` | A random secret shared with Vercel via the `PROXY_SECRET` env var |
+   | `siteName` | Label shown in Basic Auth dialog |
+   | `user` / `pass` | Basic Auth credentials (set both to `""` to disable) |
+   | `publicPaths` | Array of path prefixes that bypass Basic Auth (e.g. `["/webhook"]`) |
+
+2. Deploy the worker to Cloudflare:
+   - Go to **Cloudflare Dashboard → Workers & Pages → Create Worker**.
+   - Paste the contents of `cloudflare-worker.js` into the editor and save.
+   - Assign a custom domain (or use the `*.workers.dev` subdomain).
+
+3. Set `PROXY_SECRET` in your Vercel project environment variables to the same value as `config.proxySecret` in the worker. Your Vercel app can then reject any request that doesn't carry the correct header.
+
+4. Point `NEXT_PUBLIC_STATIC_FILES_BASE` (and any other asset base URLs) to the **worker domain** rather than to Vercel or the static server directly.
+
+---
+
 ## One-time GitHub Actions Setup
 
 The workflow in [.github/workflows/deploy.yml](.github/workflows/deploy.yml) deploys to Vercel when triggered **manually** from the Actions tab.
