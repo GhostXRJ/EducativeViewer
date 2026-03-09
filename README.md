@@ -7,7 +7,49 @@ A Next.js application for viewing Educative.io course content.
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) v18 or later
-- [Vercel CLI](https://vercel.com/docs/cli) — for manual/local deployment only (`npm install -g vercel`)
+- [GitHub CLI](https://cli.github.com/) (`gh`) — for downloading releases and managing deployments
+- [Vercel CLI](https://vercel.com/docs/cli) — installed automatically by `deploy.js` if missing
+
+---
+
+## Quick Start
+
+Everything is managed through the interactive deploy script:
+
+```bash
+node deploy.js
+```
+
+This opens a menu that handles local dev, Vercel deployment, GitHub releases, environment variables, and more.
+
+---
+
+## deploy.js — Menu Overview
+
+| Option | Description |
+|---|---|
+| `1` | Download zip from GitHub Releases + push env vars + deploy to Vercel |
+| `2` | Download zip from GitHub Releases + run locally |
+| `3` | Push env vars + deploy to Vercel (uses existing `.next.zip`) |
+| `4` | Run locally (uses existing `.next.zip`) |
+| `5` | Push `.env.local` variables to Vercel only |
+| `6` | Create a new GitHub Release with `.next.zip` |
+| `7` | Upload `.next.zip` to an existing GitHub release |
+| `8` | Manage GitHub repo / tags (change repo, add remotes, create/push/delete tags) |
+| `9` | Manage Vercel (link project, list/add/remove env vars, list deployments) |
+| `0` | Exit |
+
+### Direct commands (non-interactive)
+
+```bash
+node deploy.js local          # download zip → prepare → next start
+node deploy.js vercel         # download zip → push env vars → vercel deploy --prod
+node deploy.js env            # push .env.local vars to Vercel only
+node deploy.js release v1.0.0 # create a new GitHub release with .next.zip
+node deploy.js upload v1.0.0  # upload .next.zip to an existing release
+node deploy.js repo           # open GitHub repo / tags manager
+node deploy.js vercel-manage  # open Vercel manager
+```
 
 ---
 
@@ -21,122 +63,36 @@ cp .env.local.example .env.local
 
 | Variable | Description |
 |---|---|
-| `PROXY_SECRET` | Secret shared with your Cloudflare Worker (`x-edu-proxy` header). Production only — not required locally |
+| `PROXY_SECRET` | Secret shared with your Cloudflare Worker (`x-edu-proxy` header). Production only |
 | `BACKEND_API_BASE` | Base URL of the Cloudflare Worker proxying Flask API calls |
 | `NEXT_PUBLIC_STATIC_FILES_BASE` | Base URL of the CDN / R2 bucket serving static assets |
 | `REVALIDATE_SECRET` | Shared secret between Next.js and the Flask backend for cache revalidation |
-| `VERCEL_ENV` | Set to `development` locally. Automatically set by Vercel in production |
+| `VERCEL_ENV` | Set to `development` locally. **Do not set in Vercel** — it's automatic |
+
+Use `deploy.js` option **5** or **9 → c** to push these to Vercel automatically.
 
 ---
 
-## Running Locally
+## One-time GitHub Actions Setup
 
-1. **Install dependencies**
-   ```bash
-   npm install
-   ```
+The workflow in [.github/workflows/deploy.yml](.github/workflows/deploy.yml) deploys to Vercel when triggered **manually** from the Actions tab.
 
-2. **Configure environment**
-   ```bash
-   cp .env.local.example .env.local
-   # Edit .env.local and fill in your values
-   ```
+Add these in your GitHub repo → **Settings → Secrets and variables → Actions**:
 
-3. **Extract the build output**
-   ```bash
-   node prepare-deploy.js
-   ```
-   This extracts `.next.zip` into `nextBuild/` and patches the manifest files.
+**Secrets:**
 
-4. **Start the server**
-   ```bash
-   npx next start
-   ```
+| Name | Where to get it |
+|---|---|
+| `VERCEL_TOKEN` | [vercel.com/account/tokens](https://vercel.com/account/tokens) |
+| `GH_PAT` | GitHub → Settings → Developer settings → Personal access tokens (needs `repo` scope) |
 
-   The app will be available at [http://localhost:3000](http://localhost:3000).
+**Variables:**
 
-> **Note:** To run in dev mode (with hot reload) you need the source code (`app/` directory).
-> `next start` serves the pre-built output from `nextBuild/` without requiring source files.
+| Name | Where to get it |
+|---|---|
+| `VERCEL_ORG_ID` | Run `vercel link` → `.vercel/project.json` → `orgId` |
+| `VERCEL_PROJECT_ID` | Same file → `projectId` |
 
----
-
-## Deploying to Vercel
-
-### Automatic deployment (GitHub Actions)
-
-Every push to `main` triggers an automatic deployment via [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml).
-
-#### One-time GitHub setup
-
-Add the following in your GitHub repo → **Settings → Secrets and variables → Actions**:
-
-**Secrets** (sensitive — hidden in logs):
-
-| Name | Value | Where to get it |
-|---|---|---|
-| `VERCEL_TOKEN` | Personal Access Token | [vercel.com/account/tokens](https://vercel.com/account/tokens) → Create Token |
-
-**Variables** (not sensitive — visible in logs):
-
-| Name | Value | Where to get it |
-|---|---|---|
-| `VERCEL_ORG_ID` | Your team/org ID | Run `vercel link` locally → `.vercel/project.json` → `orgId` |
-| `VERCEL_PROJECT_ID` | Target project ID | Same file → `projectId`, or Vercel dashboard → Project Settings → General |
-
-> The workflow recreates `.vercel/project.json` at runtime from these variables,
-> since `.vercel/` is gitignored and not committed to the repo.
-
-#### Also add environment variables to Vercel
-
-In your Vercel project → **Settings → Environment Variables**, add production values for:
-- `PROXY_SECRET`
-- `BACKEND_API_BASE`
-- `NEXT_PUBLIC_STATIC_FILES_BASE`
-- `REVALIDATE_SECRET`
-
-Do **not** set `VERCEL_ENV` — Vercel sets this automatically.
-
----
-
-### Manual deployment (local)
-
-1. **Install and login to Vercel CLI**
-   ```bash
-   npm install -g vercel
-   vercel login
-   ```
-
-2. **Link to your Vercel project**
-   ```bash
-   vercel link
-   ```
-
-3. **Prepare and deploy**
-   ```bash
-   node prepare-deploy.js
-   vercel deploy --prod
-   ```
-
-Your site will be live at your Vercel project URL (e.g. `https://edu-viewer.vercel.app`).
-
----
-
-### What `prepare-deploy.js` does
-
-- Extracts `.next.zip` → `nextBuild/` (Vercel auto-ignores `.next/`, so a rename is required)
-- Patches `required-server-files.json` to replace build-machine paths with `/vercel/path0`
-- Updates `next.config.ts` with `distDir: 'nextBuild'`
-- Writes `vercel.json` with a no-op build command (skips rebuild on Vercel's servers)
-- Writes `.vercelignore` to prevent unnecessary files from being uploaded
-- If the linked Vercel project has `rootDirectory` set, mirrors all files into that subfolder automatically (fetched from the Vercel API)
-
-> `nextBuild/` is listed in `.gitignore` — it is always regenerated by `prepare-deploy.js` and never committed.
+To trigger a deployment: **GitHub → Actions → "Deploy to Vercel" → Run workflow → enter the release tag**.
 
 
-
-## GITHUB actions release deploy
-      gh auth login
-      gh repo set-default --view
-      gh repo set-default GhostXRJ/EducativeViewer
-      gh repo set-default Biraj2004/EducativeViewer
-      gh release create v1.0.0 .next.zip --title "v1.0.0" --notes "" --target main
