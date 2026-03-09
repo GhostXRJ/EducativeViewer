@@ -37,7 +37,7 @@ This opens a menu that handles local dev, Vercel deployment, GitHub releases, en
 | `7` | Upload `.next.zip` to an existing GitHub release |
 | `8` | Manage GitHub repo / tags (change repo, add remotes, create/push/delete tags) |
 | `9` | Manage Vercel (link project, list/add/remove env vars, list deployments) |
-| `0` | Exit |
+| `10` | Exit |
 
 ### Direct commands (non-interactive)
 
