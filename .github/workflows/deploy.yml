@@ -45,6 +45,9 @@ jobs:
   deploy:
     name: Prepare & Deploy
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
 
     steps:
       - name: Checkout repository
@@ -69,7 +72,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.npm-global
-          key: vercel-cli-${{ runner.os }}-${{ hashFiles('**/package.json') }}
+          key: vercel-cli-${{ runner.os }}-${{ hashFiles('client/package.json') }}
           restore-keys: vercel-cli-${{ runner.os }}-
 
       - name: Install Vercel CLI
@@ -81,7 +84,7 @@ jobs:
       - name: Add Vercel CLI to PATH
         run: echo "$HOME/.npm-global/bin" >> $GITHUB_PATH
 
-      # Download the first *.zip asset attached to the release.
+      # Download the first *.zip asset attached to the release into client/.
       # The GitHub CLI (gh) is pre-installed on all GitHub-hosted runners.
       - name: Download release zip
         run: gh release download "${{ steps.tag.outputs.value }}" --pattern "*.zip" --output .next.zip --clobber
@@ -89,7 +92,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_PAT }}
 
       # Runs prepare-deploy.js:
-      #   1. Extracts .next.zip → nextBuild/
+      #   1. Extracts client/.next.zip → client/nextBuild/
       #   2. Patches required-server-files.json paths
       #   3. Writes vercel.json + .vercelignore
       - name: Prepare build output
