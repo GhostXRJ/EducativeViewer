@@ -10,7 +10,7 @@
  *   node deploy.js vercel       — Vercel production deploy (push env vars + deploy)
  *   node deploy.js env          — push .env.local variables to Vercel only
  *   node deploy.js upload <tag> — upload .next.zip to an existing GitHub release
- *   node deploy.js release <tag>— create a new GitHub release with .next.zip
+ *   node deploy.js release <tag>— create/replace a GitHub release with .next.zip
  *   node deploy.js repo         — manage GitHub repo (view/change/push tag)
  */
 
@@ -648,11 +648,24 @@ async function createRelease(rl, tagArg) {
   }
 
   const tag   = tagArg || await ask(rl, 'Enter new release tag (e.g. v1.0.1): ');
-  const title = await ask(rl, `Release title [${tag.trim()}]: `);
+  const tagClean = tag.trim();
+  const title = await ask(rl, `Release title [${tagClean}]: `);
   const notes = await ask(rl, 'Release notes (leave blank for none): ');
 
-  run(`gh release create "${tag.trim()}" "${ZIP_PATH}" --title "${(title || tag).trim()}" --notes "${notes.trim()}" --target main`);
-  console.log(`[+] Release ${tag.trim()} created with .next.zip`);
+  // Recreate releases with the same tag so GitHub emits a fresh `published` event.
+  const existingReleaseTag = runCapture(`gh release view "${tagClean}" --json tagName --jq .tagName`);
+  if (existingReleaseTag) {
+    console.log(`[!] Release ${tagClean} already exists. Deleting and recreating it...`);
+    run(`gh release delete "${tagClean}" --yes --cleanup-tag`);
+
+    const localTagExists = runCapture(`git rev-parse -q --verify "refs/tags/${tagClean}"`);
+    if (localTagExists) {
+      run(`git tag -d "${tagClean}"`);
+    }
+  }
+
+  run(`gh release create "${tagClean}" "${ZIP_PATH}" --title "${(title || tagClean).trim()}" --notes "${notes.trim()}" --target main`);
+  console.log(`[+] Release ${tagClean} created with .next.zip`);
 }
 
 // ─── Interactive menu (loops until Exit) ─────────────────────────────────────
@@ -668,7 +681,7 @@ async function interactiveMenu(rl) {
   console.log('  3) Push env vars + deploy to Vercel (use existing .next.zip)');
   console.log('  4) Run locally (use existing .next.zip)');
   console.log('  5) Push .env.local variables to Vercel only');
-  console.log('  6) Create new GitHub Release with .next.zip');
+  console.log('  6) Create/replace GitHub Release with .next.zip');
   console.log('  7) Upload .next.zip to existing release');
   console.log('  8) Manage GitHub repo / tags');
   console.log('  9) Manage Vercel');

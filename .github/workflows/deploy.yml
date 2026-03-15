@@ -51,6 +51,10 @@ jobs:
     defaults:
       run:
         working-directory: client
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
 
     steps:
       - name: Checkout repository
@@ -87,6 +91,28 @@ jobs:
       - name: Add Vercel CLI to PATH
         run: echo "$HOME/.npm-global/bin" >> $GITHUB_PATH
 
+      - name: Validate Vercel target IDs
+        run: |
+          if [ -z "$VERCEL_ORG_ID" ]; then
+            echo "[ERROR] Missing VERCEL_ORG_ID. Add it in GitHub repo Variables."
+            exit 1
+          fi
+          if [ -z "$VERCEL_PROJECT_ID" ]; then
+            echo "[ERROR] Missing VERCEL_PROJECT_ID. Add it in GitHub repo Variables."
+            exit 1
+          fi
+
+      - name: Link to existing Vercel project
+        run: |
+          mkdir -p .vercel
+          cat > .vercel/project.json <<EOF
+          {"orgId":"$VERCEL_ORG_ID","projectId":"$VERCEL_PROJECT_ID"}
+          EOF
+          echo "[+] Linked to existing project: $VERCEL_PROJECT_ID"
+
+      - name: Pull Vercel project settings
+        run: vercel pull --yes --environment=production --token "$VERCEL_TOKEN"
+
       # Download the first *.zip asset attached to the release into client/.
       # The GitHub CLI (gh) is pre-installed on all GitHub-hosted runners.
       - name: Download release zip
@@ -100,13 +126,6 @@ jobs:
       #   3. Writes vercel.json + .vercelignore
       - name: Prepare build output
         run: node prepare-deploy.js
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
 
       - name: Deploy to Vercel
         run: vercel deploy --prod --yes --token "$VERCEL_TOKEN"
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_ORG_ID: ${{ vars.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ vars.VERCEL_PROJECT_ID }}
