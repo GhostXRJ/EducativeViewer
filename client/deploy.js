@@ -24,6 +24,17 @@ const readline = require('readline');
 const ROOT     = __dirname;
 const ZIP_PATH = path.join(ROOT, '.next.zip');
 
+const REQUIRED_ENV_KEYS = [
+  'PROXY_SECRET',
+  'BACKEND_API_BASE',
+  'NEXT_PUBLIC_BACKEND_API_BASE',
+  'NEXT_PUBLIC_STATIC_FILES_BASE',
+  'NEXT_PUBLIC_RSA_PUBLIC_KEY',
+];
+const LOCAL_ONLY_ENV_KEYS = new Set(['VERCEL_ENV']);
+const DEPRECATED_ENV_KEYS = new Set(['REVALIDATE_SECRET']);
+const AUTO_KEEP_ENV_KEYS = new Set(['NEXT_PUBLIC_RSA_PUBLIC_KEY']);
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function run(cmd, opts = {}) {
@@ -333,8 +344,13 @@ async function uploadEnvVars(rl) {
   }
 
   const vars = parseEnvFile(envPath);
-  // VERCEL_ENV is set automatically by Vercel — never push it
-  delete vars['VERCEL_ENV'];
+
+  // Keep local-only and deprecated values out of Vercel, and ignore empty vars.
+  for (const key of LOCAL_ONLY_ENV_KEYS) delete vars[key];
+  for (const key of DEPRECATED_ENV_KEYS) delete vars[key];
+  for (const [key, value] of Object.entries(vars)) {
+    if (!String(value || '').trim()) delete vars[key];
+  }
 
   const keys = Object.keys(vars);
   if (keys.length === 0) {
@@ -481,18 +497,38 @@ async function checkAndPromptEnvVars(rl) {
   const vars        = parseEnvFile(envPath);
   const exampleVars = fs.existsSync(examplePath) ? parseEnvFile(examplePath) : {};
 
-  // All keys from both files (example first so order is consistent)
-  const allKeys = [...new Set([...Object.keys(exampleVars), ...Object.keys(vars)])];
+  // Remove keys that are no longer used.
+  let changed = false;
+  for (const key of DEPRECATED_ENV_KEYS) {
+    if (key in vars) {
+      delete vars[key];
+      changed = true;
+      console.log(`[i] Removed deprecated key: ${key}`);
+    }
+  }
 
-  const skipKeys = new Set();
-
+  // Required keys first, then any additional keys currently present in .env.local.
+  const allKeys = [
+    ...REQUIRED_ENV_KEYS,
+    ...Object.keys(vars).filter(key => !REQUIRED_ENV_KEYS.includes(key) && !DEPRECATED_ENV_KEYS.has(key)),
+  ];
   const isPlaceholder = (val) =>
     !val || val.toLowerCase().includes('your-') || val === 'change-me' || val === 'CHANGEME';
 
-  let changed = false;
   for (const key of allKeys) {
-    if (skipKeys.has(key)) continue;
     const current = vars[key];
+    if (AUTO_KEEP_ENV_KEYS.has(key) && current && !isPlaceholder(current)) {
+      const input = (await ask(rl, `[?] ${key} is configured (auto-managed)\n    New value (Enter to keep): `)).trim();
+      if (input) {
+        vars[key] = input;
+        changed = true;
+        console.log(`    [+] Updated.`);
+      } else {
+        console.log(`    [+] Kept.`);
+      }
+      continue;
+    }
+
     if (isPlaceholder(current)) {
       // Placeholder — must be configured, no sensible default to fall back on
       console.log(`\n[!] ${key} is not configured`);
@@ -526,7 +562,8 @@ async function checkAndPromptEnvVars(rl) {
         const eq = trimmed.indexOf('=');
         if (eq === -1) { out += line + '\n'; continue; }
         const key = trimmed.slice(0, eq).trim();
-        out += key in vars ? `${key}=${vars[key]}\n` : `${line}\n`;
+        if (DEPRECATED_ENV_KEYS.has(key)) continue;
+        if (key in vars) out += `${key}=${vars[key]}\n`;
       }
       // Append any extra keys not present in the example
       for (const [k, v] of Object.entries(vars)) {
